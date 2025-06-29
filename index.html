@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" class="transition duration-300">
+<head>
+  <meta charset="UTF-8" />
+  <title>System Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .dark body { background-color: #1e293b; color: #f1f5f9; }
+    .dark .card { background-color: #334155; }
+    .card { @apply bg-white dark:bg-gray-800 rounded-xl shadow p-6 transition duration-300; }
+    th, td { white-space: nowrap; }
+  </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 transition duration-300">
+  <div class="max-w-7xl mx-auto p-6">
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-4xl font-bold text-blue-700 dark:text-blue-300">System Tracker</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Real-time resource usage with alerts and charts</p>
+      </div>
+      <button id="themeToggle" class="px-4 py-2 rounded bg-gray-200 dark:bg-gray-700 text-sm">Toggle Theme</button>
+    </div>
+
+    <!-- ALERT -->
+    <div id="alertBox" class="hidden bg-red-500 text-white px-4 py-2 rounded mb-6"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+      <div class="card">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-xl font-semibold text-blue-600 dark:text-blue-300">CPU Usage</h2>
+          <button onclick="downloadChart(cpuChart, 'cpu-usage')" class="text-sm text-blue-500 hover:underline">Download</button>
+        </div>
+        <canvas id="cpuChart" height="200"></canvas>
+        <div class="mt-4">
+          <div class="h-4 bg-gray-300 dark:bg-gray-600 rounded">
+            <div id="cpuBar" class="h-4 bg-blue-500 rounded w-0 transition-all duration-500"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-xl font-semibold text-green-600 dark:text-green-300">Memory Usage</h2>
+          <button onclick="downloadChart(memChart, 'memory-usage')" class="text-sm text-green-500 hover:underline">Download</button>
+        </div>
+        <canvas id="memChart" height="200"></canvas>
+        <div class="mt-4">
+          <div class="h-4 bg-gray-300 dark:bg-gray-600 rounded">
+            <div id="memBar" class="h-4 bg-green-500 rounded w-0 transition-all duration-500"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Process Table -->
+    <div class="card mb-10">
+      <h2 class="text-2xl font-bold mb-4 text-indigo-700 dark:text-indigo-300">Top Processes</h2>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm divide-y divide-gray-300 dark:divide-gray-600">
+          <thead class="bg-gray-100 dark:bg-gray-700 cursor-pointer select-none" id="processHead">
+            <tr>
+              <th class="px-4 py-2">PID</th>
+              <th class="px-4 py-2">Name</th>
+              <th class="px-4 py-2">CPU %</th>
+              <th class="px-4 py-2">Memory (MB)</th>
+              <th class="px-4 py-2">CPU Time (s)</th>
+            </tr>
+          </thead>
+          <tbody id="processTableBody" class="divide-y divide-gray-200 dark:divide-gray-600 bg-white dark:bg-gray-800">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- CPU Time Breakdown -->
+    <div class="card">
+      <h2 class="text-2xl font-bold mb-4 text-purple-700 dark:text-purple-300">System CPU Time Breakdown</h2>
+      <ul id="cpuTimeList" class="list-disc ml-6 space-y-1 text-sm"></ul>
+    </div>
+  </div>
+
+  <script>
+    let cpuChart, memChart, sortAsc = true, lastSortKey = null;
+
+    const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+    const memCtx = document.getElementById('memChart').getContext('2d');
+
+    cpuChart = new Chart(cpuCtx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'CPU Usage', data: [], borderColor: '#3B82F6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4 }] },
+      options: { scales: { y: { beginAtZero: true, max: 100 } } }
+    });
+
+    memChart = new Chart(memCtx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Memory Used', data: [], borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.1)', fill: true, tension: 0.4 }] },
+      options: { scales: { y: { beginAtZero: true } } }
+    });
+
+    async function updateDashboard() {
+      const res = await fetch('/metrics');
+      const data = await res.json();
+      const time = new Date().toLocaleTimeString();
+
+      // Update charts
+      if (cpuChart.data.labels.length > 20) {
+        cpuChart.data.labels.shift();
+        cpuChart.data.datasets[0].data.shift();
+        memChart.data.labels.shift();
+        memChart.data.datasets[0].data.shift();
+      }
+
+      cpuChart.data.labels.push(time);
+      cpuChart.data.datasets[0].data.push(data.cpu_usage);
+      cpuChart.update();
+
+      memChart.data.labels.push(time);
+      memChart.data.datasets[0].data.push(data.memory_used);
+      memChart.update();
+
+      // Progress bars
+      document.getElementById("cpuBar").style.width = `${data.cpu_usage}%`;
+      const memPercent = ((data.memory_used / data.memory_total) * 100).toFixed(1);
+      document.getElementById("memBar").style.width = `${memPercent}%`;
+
+      // CPU alert
+      const alertBox = document.getElementById('alertBox');
+      alertBox.classList.toggle('hidden', data.cpu_usage < 80);
+      alertBox.textContent = `⚠️ High CPU usage: ${data.cpu_usage}%`;
+
+      // Update process table
+      const tableBody = document.getElementById('processTableBody');
+      tableBody.innerHTML = '';
+      (window.currentProcesses = data.processes).forEach(proc => {
+        tableBody.innerHTML += `
+          <tr>
+            <td class="px-4 py-2">${proc.pid}</td>
+            <td class="px-4 py-2">${proc.name}</td>
+            <td class="px-4 py-2">${proc.cpu_percent}</td>
+            <td class="px-4 py-2">${proc.memory_used}</td>
+            <td class="px-4 py-2">${proc.cpu_time}</td>
+          </tr>`;
+      });
+
+      // Update CPU time breakdown
+      const breakdown = data.cpu_time_breakdown;
+      document.getElementById('cpuTimeList').innerHTML = `
+        <li>User Time: ${breakdown.user} sec</li>
+        <li>System Time: ${breakdown.system} sec</li>
+        <li>Idle Time: ${breakdown.idle} sec</li>`;
+    }
+
+    function downloadChart(chart, name) {
+      const link = document.createElement('a');
+      link.download = `${name}.png`;
+      link.href = chart.toBase64Image();
+      link.click();
+    }
+
+    document.getElementById("themeToggle").onclick = () => {
+      document.documentElement.classList.toggle("dark");
+    };
+
+    // Sorting functionality
+    document.getElementById("processHead").addEventListener("click", (e) => {
+      const headers = ["pid", "name", "cpu_percent", "memory_used", "cpu_time"];
+      const colIndex = Array.from(e.target.parentNode.children).indexOf(e.target);
+      if (colIndex < 0 || !window.currentProcesses) return;
+      const key = headers[colIndex];
+      if (lastSortKey === key) sortAsc = !sortAsc;
+      lastSortKey = key;
+      window.currentProcesses.sort((a, b) => {
+        if (typeof a[key] === "string") return sortAsc ? a[key].localeCompare(b[key]) : b[key].localeCompare(a[key]);
+        return sortAsc ? a[key] - b[key] : b[key] - a[key];
+      });
+      updateDashboard(); // re-render table with sorted data
+    });
+
+    setInterval(updateDashboard, 1000);
+  </script>
+</body>
+</html>
